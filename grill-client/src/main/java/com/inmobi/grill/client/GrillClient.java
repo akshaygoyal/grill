@@ -28,6 +28,7 @@ import com.inmobi.grill.api.query.*;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
+import javax.ws.rs.core.Response;
 import java.io.Console;
 import java.util.HashMap;
 import java.util.List;
@@ -171,6 +172,11 @@ public class GrillClient {
           + query + " is not available, its current status is " + status);
     }
     return getGrillStatement(query).getResultSet();
+  }
+
+  public Response getHTTPResultSet(QueryHandle handle) {
+    LOG.debug("Getting http results for: " + handle.toString());
+    return getGrillStatement(handle).getHTTPResultSet();
   }
 
   public List<QueryHandle> getQueries(String state, String user) {

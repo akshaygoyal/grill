@@ -28,6 +28,10 @@ import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 import org.springframework.stereotype.Component;
 
+import javax.ws.rs.core.Response;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.util.List;
 import java.util.UUID;
@@ -39,11 +43,26 @@ public class GrillQueryCommands extends  BaseGrillCommand implements CommandMark
   public String executeQuery(
       @CliOption(key = {"", "query"}, mandatory = true, help = "Query to execute") String sql,
       @CliOption(key = {"async"}, mandatory = false, unspecifiedDefaultValue = "false",
-          specifiedDefaultValue = "true", help = "Sync query execution") boolean asynch) {
+          specifiedDefaultValue = "true", help = "Sync query execution") boolean asynch,
+      @CliOption(key = {"store"}, mandatory = false, help = "Location to store result file") String location) {
+
+    // This is to check if storage location is provided or not,
+    // this will also handle this case: 'query execute <query> --store '
+    // in which it ignores the --store option and proceed.
+    if (isLocationProvided(location)) {
+      // This is to check if provided path is valid dir or not.
+      LOG.debug("***** Location provided: " + location);
+      if(!isLocationValid(location)){
+        LOG.debug("***** Location invalid: " + location);
+        return "Provided storage location either does not exist or is not a directory, please check the path.";
+      }
+      LOG.debug("***** Location valid: " + location);
+    }
+
     if (!asynch) {
       try {
         GrillClient.GrillClientResultSetWithStats result = getClient().getResults(sql);
-        return formatResultSet(result);
+        return formatResultSet(result, location);
       } catch (Throwable t) {
         return t.getMessage();
       }
@@ -53,40 +72,121 @@ public class GrillQueryCommands extends  BaseGrillCommand implements CommandMark
     }
   }
 
-  private String formatResultSet(GrillClient.GrillClientResultSetWithStats rs) {
-    StringBuilder b = new StringBuilder();
-    int i = 0;
+
+  private boolean isLocationProvided(String location) {
+    if (location != null && !location.isEmpty()) {
+      return true;
+    }
+    return false;
+  }
+
+  private boolean isLocationValid(String location) {
+    File file = new File(location);
+    if (file.exists() && file.isDirectory()) {
+      return true;
+    }
+    return false;
+  }
+
+
+  private String formatResultSet(GrillClient.GrillClientResultSetWithStats rs,
+      String location) {
     if (rs.getResultSet() != null) {
       QueryResultSetMetadata resultSetMetadata = rs.getResultSet().getResultSetMetadata();
-      for (ResultColumn column : resultSetMetadata.getColumns()) {
-        b.append(column.getName()).append("\t");
-      }
-      b.append("\n");
       QueryResult r = rs.getResultSet().getResult();
+
       if (r instanceof InMemoryQueryResult) {
-        InMemoryQueryResult temp = (InMemoryQueryResult) r;
-        for (ResultRow row : temp.getRows()) {
-          for (Object col : row.getValues()) {
-            b.append(col).append("\t");
-          }
-          i++;
-          b.append("\n");
-        }
+        return getInMemoryResults(rs, r, resultSetMetadata, location);
       } else {
-        PersistentQueryResult temp = (PersistentQueryResult) r;
-        b.append("Results of query stored at : " + temp.getPersistedURI());
+        return getPersistentQueryResults(rs, r, location);
       }
     }
+    return getRowCountMessage(rs, 0);
+  }
 
+  private String getInMemoryResults(
+      GrillClient.GrillClientResultSetWithStats rs,
+      QueryResult r, QueryResultSetMetadata resultSetMetadata, String location) {
+    LOG.debug("***** In getInMemmoryResults ");
+    StringBuilder str = new StringBuilder();
+    int rowCount = 0;
+    for (ResultColumn column : resultSetMetadata.getColumns()) {
+      str.append(column.getName()).append("\t");
+    }
+    str.append("\n");
+    InMemoryQueryResult temp = (InMemoryQueryResult) r;
+    for (ResultRow row : temp.getRows()) {
+      for (Object col : row.getValues()) {
+        str.append(col).append("\t");
+      }
+      rowCount++;
+      str.append("\n");
+    }
+
+    str.append(getRowCountMessage(rs, rowCount));
+
+    if (isLocationProvided(location)) {
+      String dirName = location + "/" + rs.getQuery().getQueryHandle().getHandleId();
+      File dir = new File(dirName);
+      File file;
+      try {
+        dir.mkdir();
+        String fileName = dirName + "/result.txt";
+        file = new File(fileName);
+        if (!file.exists()) {
+          file.createNewFile();
+        }
+
+        FileWriter fileWriter = new FileWriter(file);
+        fileWriter.write(str.toString());
+        fileWriter.close();
+      } catch (IOException ioException) {
+        return ioException.getMessage();
+      }
+      return "Results stored at " + file.getAbsolutePath();
+    }
+    return str.toString();
+  }
+
+  private String getPersistentQueryResults(GrillClient.GrillClientResultSetWithStats rs, QueryResult r, String location) {
+    if (isLocationProvided(location)) {
+      LOG.debug("***** In getPersistentQueryResults ");
+      LOG.debug("***** In getPersistentQueryResults: Query Handle: " + rs.getQuery().getQueryHandle().toString());
+      Response response = getClient().getHTTPResultSet(
+          rs.getQuery().getQueryHandle());
+      //      Response response = client.getHTTPResultSet(QueryHandle.fromString("6108328f-3039-47b9-b87c-b494f92d9fef"));
+      LOG.debug(response.toString());
+      return "Response: " + response.getEntity();
+      //      ReadableByteChannel rbc = Channels.newChannel((new URL("").openStream());
+      //      FileOutputStream fos = null;
+      //      try {
+      //        fos = new FileOutputStream(location);
+      //        fos.getChannel().transferFrom(rbc, 0, Long.MAX_VALUE);
+      //      } catch (IOException e) {
+      //        e.printStackTrace();
+      //      }
+      //    } else {
+      //      StringBuilder str = new StringBuilder();
+      //      PersistentQueryResult temp = (PersistentQueryResult) r;
+      //      str.append("Results of query stored at : " + temp.getPersistedURI());
+      //    }
+    }
+    return null;
+  }
+
+  private String getRowCountMessage(
+      GrillClient.GrillClientResultSetWithStats rs, int rowCount) {
+    StringBuilder message = new StringBuilder();
     if (rs.getQuery() != null) {
       long submissionTime = rs.getQuery().getSubmissionTime();
       long endTime = rs.getQuery().getFinishTime();
-      b.append(i).append(" rows process in (").
-          append(endTime>0?((endTime - submissionTime)/1000): 0).
+      message.append(rowCount).append(" rows process in (").
+          append(endTime > 0 ? ((endTime - submissionTime) / 1000) : 0).
           append(") seconds.\n");
     }
-    return b.toString();
+    return message.toString();
   }
+
 
   @CliCommand(value = "query status", help = "Fetch status of executed query")
   public String getStatus(@CliOption(key = {"", "query"},
@@ -151,12 +251,28 @@ public class GrillQueryCommands extends  BaseGrillCommand implements CommandMark
   }
 
   @CliCommand(value = "query results", help ="get results of async query")
-  public String getQueryResults(
-      @CliOption(key = {"", "query"}, mandatory = true, help = "query-handle for fetching result") String qh)   {
+  public String getQueryResults(@CliOption(key = {"", "query"},
+      mandatory = true, help = "query-handle for fetching result") String qh,
+      @CliOption(key = {"store"}, mandatory = false, help = "Location to store result file") String location)   {
+
+    // This is to check if storage location is provided or not,
+    // this will also handle this case: 'query results <query-handle> --store '
+    // in which it ignores the --store option and proceed.
+    if (location != null && !location.isEmpty()) {
+      // This is to check if provided path is valid dir or not.
+      if(!isLocationValid(location)){
+        return "Provided storage location either does not exist or is not a directory, please check the path.";
+      }
+    }
+
     try {
       GrillClient.GrillClientResultSetWithStats result = getClient().getAsyncResults(
           new QueryHandle(UUID.fromString(qh)));
-      return formatResultSet(result);
+      if(location != null && !location.isEmpty()){
+        return formatResultSet(result, location);
+      } else {
+        return formatResultSet(result, location);
+      }
     } catch (Throwable t) {
       return t.getMessage();
     }
@@ -209,12 +325,29 @@ public class GrillQueryCommands extends  BaseGrillCommand implements CommandMark
   public String executePreparedQuery(
       @CliOption(key = {"", "handle"}, mandatory = true, help = "Prepare handle to execute") String phandle,
       @CliOption(key = {"async"}, mandatory = false, unspecifiedDefaultValue = "false",
-          specifiedDefaultValue = "true", help = "Sync query execution") boolean asynch) {
+          specifiedDefaultValue = "true", help = "Sync query execution") boolean asynch,
+      @CliOption(key = {"store"}, mandatory = false, help = "Location to store result file") String location) {
+
+    // This is to check if storage location is provided or not,
+    // this will also handle this case: 'prepQuery execute <query-handle> --store '
+    // in which it ignores the --store option and proceed.
+    if (location != null && !location.isEmpty()) {
+      // This is to check if provided path is valid dir or not.
+      if(!isLocationValid(location)){
+        return "Provided storage location either does not exist or is not a directory, please check the path.";
+      }
+    }
+
     if (!asynch) {
       try {
         GrillClient.GrillClientResultSetWithStats result =
-            getClient().getResultsFromPrepared(QueryPrepareHandle.fromString(phandle));
-        return formatResultSet(result);
+            getClient().getResultsFromPrepared(
+                QueryPrepareHandle.fromString(phandle));
+        if(location != null && !location.isEmpty()){
+          return formatResultSet(result, location);
+        } else {
+          return formatResultSet(result, location);
+        }
       } catch (Throwable t) {
         return t.getMessage();
       }

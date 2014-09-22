@@ -23,6 +23,8 @@ package com.inmobi.grill.client;
 import com.inmobi.grill.api.APIResult;
 import com.inmobi.grill.api.query.*;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.glassfish.jersey.media.multipart.FormDataBodyPart;
 import org.glassfish.jersey.media.multipart.FormDataContentDisposition;
 import org.glassfish.jersey.media.multipart.FormDataMultiPart;
@@ -34,6 +36,7 @@ import javax.ws.rs.client.Entity;
 import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.GenericType;
 import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
 import java.util.List;
 
 /**
@@ -43,6 +46,7 @@ public class GrillStatement {
 
   private final GrillConnection connection;
   private GrillQuery query;
+  private static final Log LOG = LogFactory.getLog(GrillStatement.class);
 
   public GrillStatement(GrillConnection connection) {
     this.connection = connection;
@@ -137,13 +141,15 @@ public class GrillStatement {
   private WebTarget getQueryWebTarget(Client client) {
     return client.target(
         connection.getGrillConnectionParams().getBaseConnectionUrl()).path(
-            connection.getGrillConnectionParams().getQueryResourcePath()).path("queries");
+            connection.getGrillConnectionParams().getQueryResourcePath()).path(
+        "queries");
   }
 
   private WebTarget getPreparedQueriesWebTarget(Client client) {
     return client.target(
         connection.getGrillConnectionParams().getBaseConnectionUrl()).path(
-            connection.getGrillConnectionParams().getQueryResourcePath()).path("preparedqueries");
+            connection.getGrillConnectionParams().getQueryResourcePath()).path(
+        "preparedqueries");
   }
 
   public GrillQuery getQuery(QueryHandle handle) {
@@ -151,7 +157,8 @@ public class GrillStatement {
       Client client = ClientBuilder.newClient();
       WebTarget target = getQueryWebTarget(client);
       this.query = target.path(handle.toString()).queryParam(
-          "sessionid", connection.getSessionHandle()).request().get(GrillQuery.class);
+          "sessionid", connection.getSessionHandle()).request().get(
+          GrillQuery.class);
       return query;
     } catch (Exception e) {
       throw new IllegalStateException("Failed to get query status, cause:" + e.getMessage());
@@ -163,7 +170,8 @@ public class GrillStatement {
       Client client = ClientBuilder.newClient();
       WebTarget target = getPreparedQueriesWebTarget((client));
       return target.path(handle.toString()).queryParam(
-          "sessionid", connection.getSessionHandle()).request().get(GrillPreparedQuery.class);
+          "sessionid", connection.getSessionHandle()).request().get(
+          GrillPreparedQuery.class);
     } catch (Exception e) {
       throw new IllegalStateException("Failed to get query status, cause:" + e.getMessage());
     }
@@ -303,6 +311,23 @@ public class GrillStatement {
     }
   }
 
+  public Response getHTTPResultSet() {
+    return this.getHTTPResultSet(this.query.getQueryHandle());
+  }
+
+  public Response getHTTPResultSet(QueryHandle handle) {
+    Client client = ClientBuilder.newClient();
+    LOG.debug(" GrillStatement: Getting http result set for: " + handle.toString());
+    try {
+      WebTarget target = getQueryWebTarget(client);
+      return target.path(handle.toString()).
+          path("httpresultset").queryParam(
+          "sessionid", connection.getSessionHandle()).request().get(
+          Response.class);
+    } catch (Exception e) {
+      throw new IllegalStateException("Failed to get httpresultset, cause:" + e.getMessage());
+    }
+  }
 
   public boolean kill() {
     return this.kill(query);

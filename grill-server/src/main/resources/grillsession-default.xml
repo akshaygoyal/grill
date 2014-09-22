@@ -24,7 +24,7 @@
 <configuration>
 <property>
   <name>grill.persistent.resultset</name>
-  <value>false</value>
+  <value>true</value>
   <description>Whether to enable persistent resultset for queries. When enabled,
  server will fetch results from driver, custom format them if any and store in
  a configured location. The file name of query output is queryhandle-id, with
